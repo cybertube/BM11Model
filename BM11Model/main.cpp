@@ -54,9 +54,11 @@ public:
         float      mirrorBoltSpacing;  /* ft                                                       */
 
         struct {
-            float frameMetal; /* $ / ft   */
-            float mirror;     /* $ / ft^2 */
-            float mirrorBolt; /* $ / each */
+            float frameMetal;            /* $ / ft   */
+            float mirror;                /* $ / ft^2 */
+            float mirrorBolt;            /* $ / each */
+            float frameThroughHoleDrill; /* $ / each */
+            float frameThroughHoleTap;   /* $ / each */
         } unit_cost;
 
     } InputParameters;
@@ -115,8 +117,12 @@ public:
             float      xsection_inner_area;
             float      xsection_metal_area;
             float      metal_volume;
-            float      mass;
-            float      cost;
+            float      metal_mass;
+            float      metal_cost;
+            float      drill_count; /* Through drill,  both sides of box section */
+            float      drill_cost;
+            float      tap_count;
+            float      tap_cost;
         } frame;
         struct {
             float      surface_area;
@@ -192,7 +198,9 @@ BM11Model::InputParameters BM11Model::getDefaultInputParameters(void)
        82 Degree Countersink Angle, 1/4"-20 Thread Size, 1/2" Long.
        Sold in bags of 10 */
     p.unit_cost.mirrorBolt = (3.67f / 10.0f); /* $ / each */
-    
+    p.unit_cost.frameThroughHoleDrill = (695.0f / 160.0f); /* $695 for 160 holes at 1/4" dia from Bayshore */
+    p.unit_cost.frameThroughHoleTap   = (480.0f / 320.0f); /* $480 for 320 tap plunges 1/4-20 from Bayshore */
+
     return p;
 }
 
@@ -253,15 +261,19 @@ void BM11Model::printOutputParameters(OutputParameters params)
     printf("   Total length             = %.3f ft\n", op->frame.total_length);
     printf("   Cross-section metal area = %.3f in^2\n", op->frame.xsection_metal_area);
     printf("   Metal volume             = %.3f in^3 (%.3f ft^3)\n", op->frame.metal_volume, op->frame.metal_volume / (12.0f * 12.0f * 12.0f));
-    printf("   Mass                     = %.3f lb\n", op->frame.mass);
-    printf("   Cost                     = $%.3f\n", op->frame.cost);
+    printf("   Metal Mass               = %.3f lb\n", op->frame.metal_mass);
+    printf("   Metal Cost               = $%.3f\n", op->frame.metal_cost);
+    printf("   Drill Count              = %.3f\n", op->frame.drill_count);
+    printf("   Drill Cost               = $%.3f\n", op->frame.drill_cost);
+    printf("   Tap Count                = %.3f\n", op->frame.tap_count);
+    printf("   Tap Cost                 = $%.3f\n", op->frame.tap_cost);
     
     printf("Mirror coating info:\n");
     printf("   Total surface area       = %.3f ft^2\n", op->mirror.surface_area);
     printf("   Mirror cost              = $%.3f\n", op->mirror.cost);
     printf("   Mirror bolt count        = %f\n", op->mirror.bolt_count);
     printf("   Mirror bolt cost         = $%.3f\n", op->mirror.bolt_cost);
-
+    
     printf("Wind:\n");
     printf("   XY plane:\n");
     printf("      Total surface area = %.3f ft^2\n", op->wind.total_surface_area_XY);
@@ -402,7 +414,7 @@ bool BM11Model::evaluate(void)
     GLKVector3 norm_ABC      = GLKVector3Make(0.0f, 1.0f, 0.0f);
     op->dihedral_angle.angle_BOA_BOC = acosf(GLKVector3DotProduct(norm_BOA, norm_BOC));
     op->dihedral_angle.angle_BOA_ABC = acosf(GLKVector3DotProduct(norm_BOA, norm_ABC));
-    
+
     /* Frame info */
     op->frame.perimeter_length    = ((op->edge_length.BA * 4) + 
                                     (op->edge_length.OA * 4) + 
@@ -418,16 +430,19 @@ bool BM11Model::evaluate(void)
     op->frame.xsection_inner_area = (op->frame.xsection_inner_dim.x * op->frame.xsection_inner_dim.y);
     op->frame.xsection_metal_area = (op->frame.xsection_area - op->frame.xsection_inner_area);
     op->frame.metal_volume        = (op->frame.xsection_metal_area * (op->frame.total_length * 12.0f));
-    op->frame.mass                = (op->frame.metal_volume * _inputParams.metalDensity);
-    op->frame.cost                = (op->frame.total_length * _inputParams.unit_cost.frameMetal);
-    
+    op->frame.metal_mass          = (op->frame.metal_volume * _inputParams.metalDensity);
+    op->frame.metal_cost          = (op->frame.total_length * _inputParams.unit_cost.frameMetal);
+    op->frame.drill_count         = (op->frame.total_length / _inputParams.mirrorBoltSpacing);
+    op->frame.drill_cost          = (op->frame.drill_count * _inputParams.unit_cost.frameThroughHoleDrill);
+    op->frame.tap_count           = (op->frame.drill_count * 2.0f); /* x 2 due to double sided mirror attachment */
+    op->frame.tap_cost            = (op->frame.tap_count * _inputParams.unit_cost.frameThroughHoleTap);
+
     /* Mirror assembly */
     op->mirror.surface_area = (op->overall_structure.triangle_area * 8.0f); /* 8 triangles */
     op->mirror.cost         = (op->mirror.surface_area * _inputParams.unit_cost.mirror);
-    op->mirror.bolt_count   = ((op->frame.total_length * 2) /  /* x 2 due to double sided mirror attachment */
-                              _inputParams.mirrorBoltSpacing);
+    op->mirror.bolt_count   = op->frame.tap_count;
     op->mirror.bolt_cost    = (op->mirror.bolt_count * _inputParams.unit_cost.mirrorBolt);
-
+    
     /* Wind force calculations */
     /* Project triangle(OBA) onto XY plane */
     GLKVector3 ApXY = GLKVector3Multiply(op->vertex_coord.A0, GLKVector3Make(1.0f, 1.0f, 0.0f));
@@ -448,8 +463,12 @@ bool BM11Model::evaluate(void)
 
     
     /* Totals */
-    op->total.mass = op->frame.mass; /* TODO: Mirror and bolts */
-    op->total.cost = op->frame.cost + op->mirror.cost + op->mirror.bolt_cost;
+    op->total.mass = op->frame.metal_mass; /* TODO: Mirror and bolts */
+    op->total.cost = (op->frame.metal_cost + 
+                      op->frame.drill_cost + 
+                      op->frame.tap_cost   + 
+                      op->mirror.cost      + 
+                      op->mirror.bolt_cost);
 
     return false;
 }
