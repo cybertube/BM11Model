@@ -111,10 +111,6 @@ public:
             float      perimeter_length;
             float      reinforce_length;
             float      total_length;
-            float      xsection_area;
-            GLKVector2 xsection_inner_dim;
-            float      xsection_inner_area;
-            float      xsection_metal_area;
             float      metal_volume;
             float      metal_mass;
             float      metal_cost;
@@ -258,7 +254,6 @@ void BM11Model::printOutputParameters(OutputParameters params)
     printf("   Perimeter length         = %.3f ft\n", op->frame.perimeter_length);
     printf("   Reinforce length         = %.3f ft\n", op->frame.reinforce_length);
     printf("   Total length             = %.3f ft\n", op->frame.total_length);
-    printf("   Cross-section metal area = %.3f in^2\n", op->frame.xsection_metal_area);
     printf("   Metal volume             = %.3f in^3 (%.3f ft^3)\n", op->frame.metal_volume, op->frame.metal_volume / (12.0f * 12.0f * 12.0f));
     printf("   Metal Mass               = %.3f lb\n", op->frame.metal_mass);
     printf("   Metal Cost               = $%.3f\n", op->frame.metal_cost);
@@ -422,13 +417,13 @@ bool BM11Model::evaluate(void)
        Also, one cross-bar between B0 and B1 */
     op->frame.reinforce_length    = (op->edge_length.BA * 1.6 * 4) + op->overall_structure.walkway_base_width;
     op->frame.total_length        = (op->frame.perimeter_length + op->frame.reinforce_length);
-    op->frame.xsection_area       = (_inputParams.frameCrossSection.x *
-                                    _inputParams.frameCrossSection.y);
-    op->frame.xsection_inner_dim  = GLKVector2Make(_inputParams.frameCrossSection.x - (_inputParams.frameWallThickness * 2.0f),
-                                                  _inputParams.frameCrossSection.y - (_inputParams.frameWallThickness * 2.0f));
-    op->frame.xsection_inner_area = (op->frame.xsection_inner_dim.x * op->frame.xsection_inner_dim.y);
-    op->frame.xsection_metal_area = (op->frame.xsection_area - op->frame.xsection_inner_area);
-    op->frame.metal_volume        = (op->frame.xsection_metal_area * (op->frame.total_length * 12.0f));
+    float      xsection_area      = (_inputParams.frameCrossSection.x *
+                                     _inputParams.frameCrossSection.y);
+    GLKVector2 xsection_inner_dim = GLKVector2Make(_inputParams.frameCrossSection.x - (_inputParams.frameWallThickness * 2.0f),
+                                                   _inputParams.frameCrossSection.y - (_inputParams.frameWallThickness * 2.0f));
+    float      xsection_inner_area = (xsection_inner_dim.x * xsection_inner_dim.y);
+    float      xsection_metal_area = (xsection_area - xsection_inner_area);
+    op->frame.metal_volume        = (xsection_metal_area * (op->frame.total_length * 12.0f));
     op->frame.metal_mass          = (op->frame.metal_volume * _inputParams.metalDensity);
     op->frame.metal_cost          = (op->frame.total_length * _inputParams.unit_cost.frameMetal);
     op->frame.drill_count         = (op->frame.total_length / _inputParams.mirrorBoltSpacing);
