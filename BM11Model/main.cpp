@@ -44,10 +44,18 @@ public:
     };
 
     typedef struct {
-        float squareSideLength;   /* Size of the starting square forming one of the triangles */
-        float baseCutBackLength;  /* Cut back on base of square to form the triangle          */
-        float angle_ABC;          /* Angle on the ground plane between two triangles          */
+        float      squareSideLength;       /* Size of the starting square forming one of the triangles */
+        float      baseCutBackLength;      /* Cut back on base of square to form the triangle          */
+        float      angle_ABC;              /* Angle on the ground plane between the two triangles      */
+        GLKVector2 frameCrossSection;      /* Cross section dimensions (in)                            */
+        float      frameWallThickness;     /* Wall thickness (in)                                      */
+        float      metalDensity;           /* lb/in^3                                                  */
+        float      metalCost;              /* $ / ft                                                   */
     } InputParameters;
+    
+    typedef struct {
+        
+    } OutputParameters;
 
     static InputParameters getDefaultInputParameters(void);
 
@@ -75,6 +83,16 @@ BM11Model::InputParameters BM11Model::getDefaultInputParameters(void)
 float sq(float x)
 {
     return (x * x);
+}
+
+void GLKVector3Print(GLKVector3 v)
+{
+    printf("[ %.3f, %.3f, %.3f ]\n", v.x, v.y, v.z);
+}
+
+float MPH_To_FTSec(float mph)
+{
+    return mph * 1.46667f;
 }
 
 bool BM11Model::evaluate(void)
@@ -236,9 +254,13 @@ bool BM11Model::evaluate(void)
     printf("   Between triangle and ground (angle_BOA_ABC) = %.3f degrees\n", GLKMathRadiansToDegrees(angle_BOA_ABC));
 
     /* Frame info */
-    float      frame_perimeter_length = ((length_BA * 4) + 
-                                         (length_OA * 4) + 
-                                         (length_OB * 4));
+    float      frame_perimeter_length    = ((length_BA * 4) + 
+                                            (length_OA * 4) + 
+                                            (length_OB * 4));
+    /* Shitty estimate on reinforcement.  Need to design first, but assuming 3 per triangle, so this is approx.
+       Also, one cross-bar between B0 and B1 */
+    float      frame_reinforce_length    = (length_BA * 1.6 * 4) + walkway_base_width;
+    float      frame_total_length        = (frame_perimeter_length + frame_reinforce_length);
     GLKVector2 frame_xsection_dim        = GLKVector2Make(0.75f, 1.5f);
     float      frame_xsection_area       = (frame_xsection_dim.x * frame_xsection_dim.y);
     float      frame_wall_thickness      = (1.0f / 16.0f);
@@ -246,14 +268,16 @@ bool BM11Model::evaluate(void)
                                                           frame_xsection_dim.y - (frame_wall_thickness * 2.0f));
     float      frame_xsection_inner_area = (frame_xsection_inner_dim.x * frame_xsection_inner_dim.y);
     float      frame_xsection_metal_area = (frame_xsection_area - frame_xsection_inner_area);
-    float      frame_metal_volume        = (frame_xsection_metal_area * (frame_perimeter_length * 12.0f));
+    float      frame_metal_volume        = (frame_xsection_metal_area * (frame_total_length * 3.0f * 4.0f));
     float      metal_density             = 0.289f; /* lb/in^3 */
     float      metal_cost                = 4.4f; /* $ / ft */
-    float      frame_mass                = (frame_metal_volume     * metal_density);
-    float      frame_cost                = (frame_perimeter_length * metal_cost);
+    float      frame_mass                = (frame_metal_volume * metal_density);
+    float      frame_cost                = (frame_total_length * metal_cost);
 
     printf("Frame info:\n");
     printf("   Perimeter length         = %.3f ft\n", frame_perimeter_length);
+    printf("   Reinforce length         = %.3f ft\n", frame_reinforce_length);
+    printf("   Total length             = %.3f ft\n", frame_total_length);
     printf("   Cross-section dimensions = [%.3f, %.3f] in\n", frame_xsection_dim.x, frame_xsection_dim.y);
     printf("   Wall thickness           = %.3f in\n", frame_wall_thickness);
     printf("   Cross-section metal area = %.3f in^2\n", frame_xsection_metal_area);
@@ -261,6 +285,68 @@ bool BM11Model::evaluate(void)
     printf("   Metal density            = %.3f lb/in^3\n", metal_density);
     printf("   Mass                     = %.3f lb\n", frame_mass);
     printf("   Cost                     = $%.3f\n", frame_cost);
+    
+    /* Mirror assembly */
+    float      mirror_surface_area       = (triangle_area * 8.0f);
+    float      mirror_unit_cost          = (220.0f / (8.0f * 4.0)); /* $ / ft^2 */
+    float      mirror_cost               = (mirror_surface_area * mirror_unit_cost);
+    float      mirror_bolts_spacing      = 2.0f; /* ft */
+#if 0
+    float      mirror_bolt_count         = (8 * /* 4 triangles, requiring bolts to hold mirror on both sides */
+                                            (3 + /* Bolt on each vertex */
+                                             ((length_BA / mirror_bolts_spacing) - 1) + /* spaced out along BA */
+                                             ((length_OA / mirror_bolts_spacing) - 1) + /* ... and OA          */
+                                             ((length_OB / mirror_bolts_spacing) - 1)   /* ... and OB          */
+                                             )
+                                            );
+#else
+    float      mirror_bolt_count         = ((frame_total_length * 2) /  /* x 2 due to double sided mirror attachment */
+                                            mirror_bolts_spacing);
+#endif
+    float      mirror_per_bolt_cost      = (3.67f / 10.0f); /* McMaster Part #90585A537
+                                                               316 Stainless Steel Hex Drive Flat Head Screw, 82 Degree Countersink Angle, 1/4"-20 Thread Size, 1/2" Long */
+    float      mirror_bolt_cost          = (mirror_bolt_count * mirror_per_bolt_cost);
+
+    printf("Mirror coating info:\n");
+    printf("   Total surface area       = %.3f ft^2\n", mirror_surface_area);
+    printf("   Mirror cost              = $%.3f\n", mirror_cost);
+    printf("   Mirror bolt count        = %f\n", mirror_bolt_count);
+    printf("   Mirror bolt cost         = $%.3f\n", mirror_bolt_cost);
+
+    /* Wind force calculations */
+    /* Project triangle(OBA) onto XY plane */
+    GLKVector3 ApXY = GLKVector3Multiply(A0, GLKVector3Make(1.0f, 1.0f, 0.0f));
+    GLKVector3 BpXY = GLKVector3Multiply(B0, GLKVector3Make(1.0f, 1.0f, 0.0f));
+    GLKVector3 OpXY = GLKVector3Multiply(O,  GLKVector3Make(1.0f, 1.0f, 0.0f));
+    /* Compute projected surface area */
+    float      triangle_surface_area_XY = (GLKVector3Length(GLKVector3CrossProduct(GLKVector3Subtract(BpXY, ApXY),
+                                                                                   GLKVector3Subtract(BpXY, OpXY))) * 0.5f);
+    float      total_surface_area_XY    = (triangle_surface_area_XY * 2.0f);
+    /* Project triangle(OBA) onto YZ plane */
+    GLKVector3 ApYZ = GLKVector3Multiply(A0, GLKVector3Make(0.0f, 1.0f, 1.0f));
+    GLKVector3 BpYZ = GLKVector3Multiply(B0, GLKVector3Make(0.0f, 1.0f, 1.0f));
+    GLKVector3 OpYZ = GLKVector3Multiply(O,  GLKVector3Make(0.0f, 1.0f, 1.0f));
+    /* Compute projected surface area */
+    float      triangle_surface_area_YZ = (GLKVector3Length(GLKVector3CrossProduct(GLKVector3Subtract(BpYZ, ApYZ),
+                                                                                   GLKVector3Subtract(BpYZ, OpYZ))) * 0.5f);
+    float      total_surface_area_YZ    = (triangle_surface_area_YZ * 2.0f);
+    printf("Wind:\n");
+    printf("   XY plane:\n");
+    printf("      Total surface area = %.3f ft^2\n", total_surface_area_XY);
+    for (float mph = 5.0f; mph <= 100.0f; mph += 5.0f) {
+        float pressure   = sq(MPH_To_FTSec(mph)) * 0.00256; /* lb/ft^2 */
+        float coeff_drag = 1.0f;
+        float force      = (total_surface_area_XY * pressure * coeff_drag);
+        printf("      Side force at %f MPH = %.0f lbs\n", mph, force);
+    }
+    printf("   YZ plane:\n");
+    printf("      Total surface area = %.3f ft^2\n", total_surface_area_YZ);
+    for (float mph = 5.0f; mph <= 100.0f; mph += 5.0f) {
+        float pressure   = sq(MPH_To_FTSec(mph)) * 0.00256; /* lb/ft^2 */
+        float coeff_drag = 1.0f;
+        float force      = (total_surface_area_YZ * pressure * coeff_drag);
+        printf("      Side force at %f MPH = %.0f lbs\n", mph, force);
+    }
     
     return false;
 }
