@@ -101,7 +101,6 @@ public:
             float      triangle_area;
             float      walkway_top_angle;
             float      walkway_base_width;
-            float      shoulder_height;
             float      walkway_shoulder_width;
         } overall_structure;
         struct {
